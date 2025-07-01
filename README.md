@@ -237,13 +237,16 @@ Contributions are welcome! Here's how you can help:
 <div align="center">
 
 ### 🏠 **Main Game Interface**
-*Modern UI with beautiful animations and smooth gameplay*
+![image](https://github.com/user-attachments/assets/71745131-6c65-467d-8c17-e6de12fbc597)
+
 
 ### 🤖 **AI vs Player Mode**
-*Challenge the intelligent AI opponent*
+![image](https://github.com/user-attachments/assets/72857888-e155-4c29-8791-6504beeba250)
+
 
 ### 🎉 **Victory Celebration**
-*Stunning confetti effects and animations*
+![image](https://github.com/user-attachments/assets/a2ec7872-69fd-4ef8-97fe-f6d6bd651c8f)
+
 
 </div>
 
@@ -263,7 +266,7 @@ Contributions are welcome! Here's how you can help:
 
 ## 📝 **License**
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+This project is free to all.
 
 ---
 
