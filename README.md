@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Tic Tac Toe Ultimate 🎮
 
 A modern, interactive Tic Tac Toe game built in Java with Swing, featuring smooth animations, AI gameplay, and a beautiful user interface.
