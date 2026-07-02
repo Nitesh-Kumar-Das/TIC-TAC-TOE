@@ -43,30 +43,54 @@
 
 ## Quick Start
 
-### Prerequisites
-- Java Development Kit (JDK) 8 or higher
-- Any Java IDE or command line compiler
+### Download Installer
+For a direct, zero-setup experience, download the native installer for your operating system from the [GitHub Releases](https://github.com/Nitesh-Kumar-Das/TIC-TAC-TOE/releases) page:
+- **Windows**: `.exe` installer (adds desktop and start menu shortcuts)
+- **macOS**: `.dmg` disk image
+- **Linux**: `.deb` package (adds application menu entry)
 
-### Installation & Running
+---
 
-1. **Clone the repository**
+### Local Build & Package
+If you want to compile and package the game into a native installer yourself, you will need **JDK 17 or higher** containing `jlink` and `jpackage`.
+
+#### Platform Prerequisites
+- **Windows**: Install the [WiX Toolset v3.x](https://wixtoolset.org/) (required to generate `.exe` packages) and ensure it is added to your environment `PATH`.
+- **macOS**: Install Xcode Command Line Tools (`xcode-select --install`).
+- **Linux**: Install Debian packaging utility tools (`sudo apt install dpkg-dev`).
+
+#### Run the Build Scripts
+1. Clone the repository:
    ```bash
    git clone https://github.com/Nitesh-Kumar-Das/TICTAC-TOE.git
    cd TICTAC-TOE
    ```
+2. Build the installer for your platform:
+   - **macOS/Linux**:
+     ```bash
+     chmod +x build.sh
+     ./build.sh
+     ```
+   - **Windows**:
+     Double-click `build.bat` or run:
+     ```cmd
+     build.bat
+     ```
+The final installers will be output to the `dist/` directory.
 
-2. **Compile the project**
+---
+
+### Alternative: Run from Source
+If you only wish to compile and run the source code directly without creating native installers:
+
+1. **Compile the project**:
    ```bash
    javac *.java
    ```
-
-3. **Run the game**
+2. **Run the game**:
    ```bash
    java TicTacToeUI
    ```
-
-### Alternative: Direct Download
-Download the source files and compile them in your preferred Java environment.
 
 ---
 

@@ -1,0 +1,11 @@
+# Build artifacts
+out/
+dist/
+
+# Java class files
+*.class
+
+# IDE and OS files
+.DS_Store
+.idea/
+*.iml

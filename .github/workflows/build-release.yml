@@ -1,0 +1,176 @@
+name: Build and Release Native Installers
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            type: exe
+            icon: icons/icon.ico
+          - os: macos-latest
+            type: dmg
+            icon: icons/icon.icns
+          - os: ubuntu-latest
+            type: deb
+            icon: icons/icon.png
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Compile and package runnable JAR
+        run: |
+          mkdir -p out/classes
+          javac -d out/classes AIBot.java GameLogic.java TicTacToeUI.java
+          jar --create --file out/game.jar --main-class=TicTacToeUI -C out/classes .
+        shell: bash
+
+      - name: Trimmed JRE via jlink
+        run: |
+          jlink --add-modules java.desktop \
+                --strip-debug \
+                --no-header-files \
+                --no-man-pages \
+                --output out/custom-jre
+        shell: bash
+
+      # ----------------------------------------------------
+      # Windows-Specific Prerequisite Setup & Packaging
+      # ----------------------------------------------------
+      - name: Install WiX Toolset (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install wix --no-progress
+          echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $GITHUB_PATH
+        shell: bash
+
+      - name: Verify Prerequisites (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            Write-Error "CRITICAL ERROR: WiX Toolset (candle.exe) is missing or not in PATH."
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Run jpackage (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          jpackage --name "TicTacToeUltimate" \
+                   --input out \
+                   --main-jar game.jar \
+                   --main-class TicTacToeUI \
+                   --runtime-image out/custom-jre \
+                   --dest dist \
+                   --icon ${{ matrix.icon }} \
+                   --type ${{ matrix.type }} \
+                   --win-shortcut \
+                   --win-menu \
+                   --win-menu-group "Games"
+        shell: bash
+
+      # ----------------------------------------------------
+      # macOS-Specific Prerequisite Setup & Packaging
+      # ----------------------------------------------------
+      - name: Verify Prerequisites (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          if ! xcode-select -p &>/dev/null; then
+            echo "CRITICAL ERROR: Xcode Command Line Tools are missing." >&2
+            exit 1
+          fi
+        shell: bash
+
+      - name: Run jpackage (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          jpackage --name "TicTacToeUltimate" \
+                   --input out \
+                   --main-jar game.jar \
+                   --main-class TicTacToeUI \
+                   --runtime-image out/custom-jre \
+                   --dest dist \
+                   --icon ${{ matrix.icon }} \
+                   --type ${{ matrix.type }}
+        shell: bash
+
+      # ----------------------------------------------------
+      # Linux-Specific Prerequisite Setup & Packaging
+      # ----------------------------------------------------
+      - name: Verify Prerequisites (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          if ! command -v dpkg-deb &>/dev/null; then
+            echo "CRITICAL ERROR: dpkg-dev tools (dpkg-deb) are missing." >&2
+            exit 1
+          fi
+        shell: bash
+
+      - name: Run jpackage (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          jpackage --name "tictactoeultimate" \
+                   --input out \
+                   --main-jar game.jar \
+                   --main-class TicTacToeUI \
+                   --runtime-image out/custom-jre \
+                   --dest dist \
+                   --icon ${{ matrix.icon }} \
+                   --type ${{ matrix.type }} \
+                   --linux-shortcut \
+                   --linux-menu-group "Game"
+        shell: bash
+
+      # ----------------------------------------------------
+      # Upload Build Artifacts
+      # ----------------------------------------------------
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: installer-${{ matrix.os }}
+          path: dist/*
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: installers
+
+      - name: Flatten directories
+        run: |
+          mkdir release-dist
+          find installers -type f -exec cp {} release-dist/ \;
+          ls -la release-dist/
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
