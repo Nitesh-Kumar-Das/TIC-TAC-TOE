@@ -42,7 +42,7 @@ jobs:
       - name: Compile and package runnable JAR
         run: |
           mkdir -p out/classes
-          javac -d out/classes AIBot.java GameLogic.java TicTacToeUI.java
+          javac -encoding UTF-8 -d out/classes AIBot.java GameLogic.java TicTacToeUI.java
           jar --create --file out/game.jar --main-class=TicTacToeUI -C out/classes .
         shell: bash
 

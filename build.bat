@@ -13,7 +13,7 @@ if exist dist rmdir /s /q dist
 :: 2. Compile source files
 echo Compiling Java source files...
 mkdir out\classes
-javac -d out\classes AIBot.java GameLogic.java TicTacToeUI.java
+javac -encoding UTF-8 -d out\classes AIBot.java GameLogic.java TicTacToeUI.java
 if %errorlevel% neq 0 (
     echo ERROR: Compilation failed.
     exit /b %errorlevel%

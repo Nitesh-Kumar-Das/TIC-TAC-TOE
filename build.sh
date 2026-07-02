@@ -13,7 +13,7 @@ rm -rf out dist
 # 2. Compile source files
 echo "Compiling Java source files..."
 mkdir -p out/classes
-javac -d out/classes AIBot.java GameLogic.java TicTacToeUI.java
+javac -encoding UTF-8 -d out/classes AIBot.java GameLogic.java TicTacToeUI.java
 
 # 3. Create a runnable JAR
 echo "Creating runnable JAR..."
