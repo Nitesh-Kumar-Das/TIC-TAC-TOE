@@ -1,293 +1,469 @@
 import javax.swing.*;
-import javax.swing.border.Border;
 import java.awt.*;
 import java.awt.event.*;
+import java.awt.geom.RoundRectangle2D;
 
+/**
+ * Tic Tac Toe Ultimate — Modern flat UI with warm-neutral palette.
+ *
+ * SWING RENDERING COMPROMISES:
+ *
+ * 1. No CSS-level box-shadows: Swing has no native drop-shadow primitive.
+ *    Flat design sidesteps this — no shadows are used anywhere.
+ *
+ * 2. No smooth CSS transitions: All color/size animations are Swing Timer-based
+ *    (~16ms discrete steps). Visually smooth at 60 FPS but not GPU-accelerated.
+ *
+ * 3. Game cells use flat rectangles (not rounded corners) because they tile in a
+ *    GridLayout — rounded corners would expose the background through corner gaps.
+ *    Only control buttons use the rounded-rectangle subclass.
+ *
+ * 4. Font fallback: Segoe UI is Windows-specific. On macOS/Linux, the JVM's
+ *    logical "SansSerif" font family is used, which maps to the platform default
+ *    (SF Pro on macOS, DejaVu Sans on Linux).
+ */
 public class TicTacToeUI extends JFrame {
+
+    // ========================================================================
+    // PALETTE — exactly 5 colors, no others
+    // ========================================================================
+    private static final Color BG_PRIMARY  = new Color(0xF7, 0xF3, 0xEE);  // #F7F3EE
+    private static final Color SURFACE     = new Color(0xE6, 0xD2, 0xB5);  // #E6D2B5
+    private static final Color ACCENT      = new Color(0xC4, 0x9A, 0x6C);  // #C49A6C
+    private static final Color ACCENT_DARK = new Color(0x8A, 0x5A, 0x44);  // #8A5A44
+    private static final Color TEXT_PRIMARY = new Color(0x2F, 0x2F, 0x2F); // #2F2F2F
+
+    // Derived tint for winning cells (lighter blend of ACCENT toward BG_PRIMARY)
+    private static final Color WIN_CELL_BG = new Color(0xE2, 0xCC, 0xAD);
+
+    // ========================================================================
+    // TYPOGRAPHY
+    // ========================================================================
+    private static final String FONT_FAMILY = resolveFontFamily();
+    private static final Font TITLE_FONT    = new Font(FONT_FAMILY, Font.BOLD, 24);
+    private static final Font STATUS_FONT   = new Font(FONT_FAMILY, Font.BOLD, 20);
+    private static final Font SCORE_FONT    = new Font(FONT_FAMILY, Font.PLAIN, 15);
+    private static final Font BUTTON_FONT   = new Font(FONT_FAMILY, Font.PLAIN, 14);
+
+    private static String resolveFontFamily() {
+        GraphicsEnvironment ge = GraphicsEnvironment.getLocalGraphicsEnvironment();
+        for (String name : ge.getAvailableFontFamilyNames()) {
+            if (name.equals("Segoe UI")) return "Segoe UI";
+        }
+        return Font.SANS_SERIF;
+    }
+
+    // ========================================================================
+    // GAME STATE
+    // ========================================================================
     private GameLogic gameLogic;
     private AIBot aiBot;
-    private JButton[][] buttons;
+    private GameCell[][] cells;
     private JLabel statusLabel;
     private JLabel scoreLabel;
-    private JButton newGameButton;
-    private JButton modeButton;
-    private JButton resetScoreButton;
-    private JPanel gamePanel;
+    private BoardPanel boardPanel;
+    private FlatButton newGameButton;
+    private FlatButton modeButton;
+    private FlatButton resetScoreButton;
     private boolean isPlayerVsAI;
-    
-    private Color primaryColor = new Color(45, 52, 54);
-    private Color secondaryColor = new Color(99, 110, 114);
-    private Color accentColor = new Color(0, 184, 148);
-    private Color dangerColor = new Color(255, 118, 117);
-    private Color warningColor = new Color(255, 177, 66);
-    private Color successColor = new Color(85, 239, 196);
-    private Color backgroundColor = new Color(223, 228, 234);
-    private Color cardColor = Color.WHITE;
-    
-    private Font titleFont = new Font("Segoe UI", Font.BOLD, 28);
-    private Font gameFont = new Font("Segoe UI", Font.BOLD, 36);
-    private Font uiFont = new Font("Segoe UI", Font.PLAIN, 14);
-    private Font statusFont = new Font("Segoe UI", Font.BOLD, 18);
-    private Font scoreFont = new Font("Segoe UI", Font.PLAIN, 16);
+    private int[][] winLine;  // cached for overlay drawing
+
+    // ========================================================================
+    // FLAT BUTTON — custom JButton subclass (requirement #1)
+    // ========================================================================
+
+    /**
+     * Flat rounded-rectangle button with no default Swing chrome.
+     * setContentAreaFilled(false), setBorderPainted(false), setFocusPainted(false).
+     * paintComponent draws a filled RoundRectangle2D with 10px corner radius.
+     *
+     * States (requirement #2):
+     *   Default  → #E6D2B5 fill, #2F2F2F text
+     *   Hover    → #C49A6C fill, #2F2F2F text
+     *   Pressed  → #8A5A44 fill, #F7F3EE text
+     *   Active   → same as Pressed (for toggle buttons like mode selector)
+     */
+    private static class FlatButton extends JButton {
+        private boolean isHovered;
+        private boolean isActive;
+        private static final int CORNER_RADIUS = 10;
+
+        FlatButton(String text) {
+            super(text);
+            setContentAreaFilled(false);
+            setBorderPainted(false);
+            setFocusPainted(false);
+            setOpaque(false);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setFont(BUTTON_FONT);
+
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseEntered(MouseEvent e) { isHovered = true; repaint(); }
+                @Override public void mouseExited(MouseEvent e)  { isHovered = false; repaint(); }
+            });
+        }
+
+        void setActive(boolean active) {
+            this.isActive = active;
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+
+            Color bg, fg;
+            if (isActive || getModel().isPressed()) {
+                bg = ACCENT_DARK;
+                fg = BG_PRIMARY;
+            } else if (isHovered) {
+                bg = ACCENT;
+                fg = TEXT_PRIMARY;
+            } else {
+                bg = SURFACE;
+                fg = TEXT_PRIMARY;
+            }
+
+            g2.setColor(bg);
+            g2.fill(new RoundRectangle2D.Float(0, 0, getWidth(), getHeight(),
+                    CORNER_RADIUS, CORNER_RADIUS));
+
+            g2.setColor(fg);
+            g2.setFont(getFont());
+            FontMetrics fm = g2.getFontMetrics();
+            int x = (getWidth() - fm.stringWidth(getText())) / 2;
+            int y = (getHeight() + fm.getAscent() - fm.getDescent()) / 2;
+            g2.drawString(getText(), x, y);
+
+            g2.dispose();
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            FontMetrics fm = getFontMetrics(getFont());
+            return new Dimension(fm.stringWidth(getText()) + 40, fm.getHeight() + 22);
+        }
+    }
+
+    // ========================================================================
+    // GAME CELL — flat board square with custom X/O rendering
+    // ========================================================================
+
+    /**
+     * A flat game cell with no Swing button chrome.
+     *
+     * Rendering (requirements #3, #4):
+     *   Empty default → #F7F3EE fill
+     *   Empty hover   → #E6D2B5 tint
+     *   X mark        → drawn in #2F2F2F (two crossing lines, 4px stroke)
+     *   O mark        → drawn in #8A5A44 (circle ring, 4px stroke)
+     *   Winning cell  → lighter tint of #C49A6C background
+     */
+    private class GameCell extends JButton {
+        private char mark = ' ';
+        private boolean isWinCell;
+        private boolean isHovered;
+        private double markScale = 1.0;  // paint-only scale for bounce animation
+        @SuppressWarnings("unused")
+        private final int row, col;
+
+        GameCell(int row, int col) {
+            this.row = row;
+            this.col = col;
+
+            setContentAreaFilled(false);
+            setBorderPainted(false);
+            setFocusPainted(false);
+            setOpaque(false);
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            setPreferredSize(new Dimension(120, 120));
+
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    if (mark == ' ' && !gameLogic.isGameOver()) {
+                        isHovered = true;
+                        repaint();
+                    }
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    isHovered = false;
+                    repaint();
+                }
+            });
+
+            addActionListener(e -> handleCellClick(row, col));
+        }
+
+        void setMark(char m) {
+            this.mark = m;
+            isHovered = false;
+            repaint();
+        }
+
+        void setWinCell(boolean win) {
+            this.isWinCell = win;
+            repaint();
+        }
+
+        void setMarkScale(double scale) {
+            this.markScale = scale;
+            repaint();
+        }
+
+        void reset() {
+            mark = ' ';
+            isWinCell = false;
+            isHovered = false;
+            markScale = 1.0;
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+
+            // Cell background
+            if (isWinCell) {
+                g2.setColor(WIN_CELL_BG);
+            } else if (isHovered && mark == ' ') {
+                g2.setColor(SURFACE);
+            } else {
+                g2.setColor(BG_PRIMARY);
+            }
+            g2.fillRect(0, 0, getWidth(), getHeight());
+
+            // Mark rendering — scaled from center (paint-only, no layout change)
+            int w = getWidth();
+            int h = getHeight();
+
+            if (mark != ' ') {
+                // Apply scale transform around cell center
+                g2.translate(w / 2.0, h / 2.0);
+                g2.scale(markScale, markScale);
+                g2.translate(-w / 2.0, -h / 2.0);
+
+                int margin = (int) (Math.min(w, h) * 0.27);
+
+                if (mark == 'X') {
+                    g2.setColor(TEXT_PRIMARY);
+                    g2.setStroke(new BasicStroke(4.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g2.drawLine(margin, margin, w - margin, h - margin);
+                    g2.drawLine(w - margin, margin, margin, h - margin);
+                } else {
+                    g2.setColor(ACCENT_DARK);
+                    g2.setStroke(new BasicStroke(4.0f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g2.drawOval(margin, margin, w - margin * 2, h - margin * 2);
+                }
+            }
+
+            g2.dispose();
+        }
+    }
+
+    // ========================================================================
+    // BOARD PANEL — grid lines + winning line overlay (requirements #3, #5)
+    // ========================================================================
+
+    /**
+     * Custom panel for the 3x3 cell grid.
+     *
+     * Grid lines: The panel background is #2F2F2F. GridLayout gaps (2px) expose
+     * this background between cells, creating clean 2px grid lines without any
+     * default Swing bevel borders.
+     *
+     * Winning overlay (requirement #5): After children are painted, a 6px #C49A6C
+     * line is drawn through the centers of the winning cells.
+     */
+    private class BoardPanel extends JPanel {
+        BoardPanel() {
+            setLayout(new GridLayout(3, 3, 2, 2));
+            setBackground(TEXT_PRIMARY);
+            // 2px padding around all edges so the grid frame matches the inner lines
+            setBorder(BorderFactory.createEmptyBorder(2, 2, 2, 2));
+        }
+
+        @Override
+        protected void paintChildren(Graphics g) {
+            super.paintChildren(g);
+
+            if (winLine != null && winLine.length == 3) {
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(ACCENT);
+                g2.setStroke(new BasicStroke(6, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+
+                Component first = cells[winLine[0][0]][winLine[0][1]];
+                Component last  = cells[winLine[2][0]][winLine[2][1]];
+
+                int x1 = first.getX() + first.getWidth() / 2;
+                int y1 = first.getY() + first.getHeight() / 2;
+                int x2 = last.getX()  + last.getWidth() / 2;
+                int y2 = last.getY()  + last.getHeight() / 2;
+
+                g2.drawLine(x1, y1, x2, y2);
+                g2.dispose();
+            }
+        }
+    }
+
+    // ========================================================================
+    // CONSTRUCTOR
+    // ========================================================================
 
     public TicTacToeUI() {
         gameLogic = new GameLogic();
         aiBot = new AIBot();
         isPlayerVsAI = false;
-        
         initializeUI();
-        setupEventListeners();
-        addWindowEffects();
     }
+
+    // ========================================================================
+    // UI INITIALIZATION
+    // ========================================================================
 
     private void initializeUI() {
-        setTitle("Modern Tic Tac Toe - Ultimate Edition");
+        setTitle("Tic Tac Toe Ultimate");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLayout(new BorderLayout(10, 10));
         setResizable(false);
+        getContentPane().setBackground(BG_PRIMARY);
+        setLayout(new BorderLayout());
 
-        getContentPane().setBackground(backgroundColor);
+        add(createHeaderPanel(), BorderLayout.NORTH);
+        add(createBoardWrapper(), BorderLayout.CENTER);
+        add(createFooterPanel(), BorderLayout.SOUTH);
 
-        JPanel headerPanel = createModernHeaderPanel();
-        add(headerPanel, BorderLayout.NORTH);
-
-        gamePanel = createModernGamePanel();
-        add(gamePanel, BorderLayout.CENTER);
-
-        JPanel footerPanel = createModernFooterPanel();
-        add(footerPanel, BorderLayout.SOUTH);
-
-        JPanel mainWrapper = new JPanel(new BorderLayout());
-        mainWrapper.setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
-        mainWrapper.setBackground(backgroundColor);
-        
         pack();
         setLocationRelativeTo(null);
-        
-        setVisible(false);
     }
 
-    private JPanel createModernHeaderPanel() {
-        JPanel headerPanel = new JPanel();
-        headerPanel.setLayout(new BorderLayout());
-        headerPanel.setBackground(primaryColor);
-        headerPanel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createRaisedBevelBorder(),
-            BorderFactory.createEmptyBorder(20, 25, 20, 25)
-        ));
+    /**
+     * Header: #E6D2B5 surface panel with title (left) and mode button (right).
+     * No border boxes — padding only (requirement #6 principle).
+     */
+    private JPanel createHeaderPanel() {
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(SURFACE);
+        header.setBorder(BorderFactory.createEmptyBorder(18, 24, 18, 24));
 
-        JLabel titleLabel = new JLabel("TIC TAC TOE ULTIMATE", JLabel.CENTER);
-        titleLabel.setFont(titleFont);
-        titleLabel.setForeground(Color.WHITE);
-        
-        titleLabel.setBorder(BorderFactory.createEmptyBorder(5, 0, 5, 0));
+        JLabel title = new JLabel("TIC TAC TOE ULTIMATE");
+        title.setFont(TITLE_FONT);
+        title.setForeground(TEXT_PRIMARY);
 
-        modeButton = createModernButton("Player vs Player", accentColor);
-        modeButton.setPreferredSize(new Dimension(180, 40));
+        modeButton = new FlatButton("Player vs Player");
+        modeButton.addActionListener(e -> toggleMode());
 
-        addHoverEffect(modeButton, accentColor, new Color(0, 206, 166));
+        header.add(title, BorderLayout.WEST);
+        header.add(modeButton, BorderLayout.EAST);
 
-        headerPanel.add(titleLabel, BorderLayout.CENTER);
-        headerPanel.add(modeButton, BorderLayout.EAST);
-
-        return headerPanel;
+        return header;
     }
 
-    private JPanel createModernGamePanel() {
-        JPanel mainPanel = new JPanel(new BorderLayout());
-        mainPanel.setBackground(backgroundColor);
-        mainPanel.setBorder(BorderFactory.createEmptyBorder(20, 0, 20, 0));
+    /**
+     * Board wrapper: #F7F3EE background with centered board panel.
+     * Uses GridBagLayout to center the board without stretching it.
+     */
+    private JPanel createBoardWrapper() {
+        JPanel wrapper = new JPanel(new GridBagLayout());
+        wrapper.setBackground(BG_PRIMARY);
+        wrapper.setBorder(BorderFactory.createEmptyBorder(28, 28, 28, 28));
 
-        JPanel cardPanel = new JPanel(new BorderLayout());
-        cardPanel.setBackground(cardColor);
-        cardPanel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createRaisedBevelBorder(),
-            BorderFactory.createEmptyBorder(25, 25, 25, 25)
-        ));
+        boardPanel = new BoardPanel();
+        cells = new GameCell[3][3];
 
-        JPanel gridPanel = new JPanel(new GridLayout(3, 3, 8, 8));
-        gridPanel.setBackground(secondaryColor);
-        gridPanel.setBorder(BorderFactory.createLoweredBevelBorder());
-
-        buttons = new JButton[3][3];
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
-                buttons[i][j] = createModernGameButton();
-                
-                final int row = i;
-                final int col = j;
-                buttons[i][j].addActionListener(e -> handleButtonClick(row, col));
-                
-                gridPanel.add(buttons[i][j]);
+                cells[i][j] = new GameCell(i, j);
+                boardPanel.add(cells[i][j]);
             }
         }
 
-        cardPanel.add(gridPanel, BorderLayout.CENTER);
-        mainPanel.add(cardPanel, BorderLayout.CENTER);
-
-        return mainPanel;
+        wrapper.add(boardPanel);
+        return wrapper;
     }
 
-    private JButton createModernGameButton() {
-        JButton button = new JButton("");
-        button.setFont(gameFont);
-        button.setBackground(cardColor);
-        button.setForeground(primaryColor);
-        button.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createRaisedBevelBorder(),
-            BorderFactory.createEmptyBorder(5, 5, 5, 5)
-        ));
-        button.setFocusPainted(false);
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        button.setPreferredSize(new Dimension(100, 100));
-        
-        addGameButtonHoverEffect(button);
-        
-        return button;
-    }
+    /**
+     * Footer: #E6D2B5 surface panel with score (left), status (center),
+     * and control buttons (right). No border boxes — padding separates
+     * sections (requirement #6).
+     */
+    private JPanel createFooterPanel() {
+        JPanel footer = new JPanel(new BorderLayout(20, 0));
+        footer.setBackground(SURFACE);
+        footer.setBorder(BorderFactory.createEmptyBorder(16, 24, 16, 24));
 
-    private JPanel createModernFooterPanel() {
-        JPanel footerPanel = new JPanel(new BorderLayout(15, 0));
-        footerPanel.setBackground(backgroundColor);
-        footerPanel.setBorder(BorderFactory.createEmptyBorder(20, 25, 25, 25));
+        // Score (left)
+        scoreLabel = new JLabel(getScoreText());
+        scoreLabel.setFont(SCORE_FONT);
+        scoreLabel.setForeground(TEXT_PRIMARY);
 
-        JPanel statusPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
-        statusPanel.setBackground(cardColor);
-        statusPanel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createRaisedBevelBorder(),
-            BorderFactory.createEmptyBorder(15, 20, 15, 20)
-        ));
-
+        // Status / turn indicator (center) — 20px+ semi-bold per requirement #7
         statusLabel = new JLabel("Player X's Turn", JLabel.CENTER);
-        statusLabel.setFont(statusFont);
-        statusLabel.setForeground(primaryColor);
-        statusPanel.add(statusLabel);
+        statusLabel.setFont(STATUS_FONT);
+        statusLabel.setForeground(TEXT_PRIMARY);
 
-        JPanel scorePanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        scorePanel.setBackground(cardColor);
-        scorePanel.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createRaisedBevelBorder(),
-            BorderFactory.createEmptyBorder(10, 15, 10, 15)
-        ));
+        // Control buttons (right)
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        controls.setOpaque(false);
 
-        scoreLabel = new JLabel(getScoreText(), JLabel.LEFT);
-        scoreLabel.setFont(scoreFont);
-        scoreLabel.setForeground(secondaryColor);
-        scorePanel.add(scoreLabel);
-
-        JPanel controlPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
-        controlPanel.setBackground(backgroundColor);
-
-        newGameButton = createModernButton("New Game", warningColor);
-        resetScoreButton = createModernButton("Reset Score", dangerColor);
-
-        addHoverEffect(newGameButton, warningColor, new Color(255, 159, 26));
-        addHoverEffect(resetScoreButton, dangerColor, new Color(255, 99, 99));
-
-        controlPanel.add(newGameButton);
-        controlPanel.add(resetScoreButton);
-
-        footerPanel.add(scorePanel, BorderLayout.WEST);
-        footerPanel.add(statusPanel, BorderLayout.CENTER);
-        footerPanel.add(controlPanel, BorderLayout.EAST);
-
-        return footerPanel;
-    }
-
-    private JButton createModernButton(String text, Color bgColor) {
-        JButton button = new JButton(text);
-        button.setFont(uiFont);
-        button.setBackground(bgColor);
-        button.setForeground(Color.WHITE);
-        button.setBorder(BorderFactory.createCompoundBorder(
-            BorderFactory.createRaisedBevelBorder(),
-            BorderFactory.createEmptyBorder(10, 15, 10, 15)
-        ));
-        button.setFocusPainted(false);
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        
-        return button;
-    }
-
-    private void addHoverEffect(JButton button, Color normalColor, Color hoverColor) {
-        button.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseEntered(MouseEvent e) {
-                button.setBackground(hoverColor);
-                button.repaint();
-            }
-
-            @Override
-            public void mouseExited(MouseEvent e) {
-                button.setBackground(normalColor);
-                button.repaint();
-            }
-        });
-    }
-
-    private void addGameButtonHoverEffect(JButton button) {
-        button.addMouseListener(new MouseAdapter() {
-            @Override
-            public void mouseEntered(MouseEvent e) {
-                if (button.getText().isEmpty()) {
-                    button.setBackground(new Color(240, 248, 255));
-                    button.setText("?");
-                    button.setForeground(new Color(169, 169, 169));
-                    button.repaint();
-                }
-            }
-
-            @Override
-            public void mouseExited(MouseEvent e) {
-                if (button.getText().equals("?")) {
-                    button.setText("");
-                    button.setBackground(cardColor);
-                    button.repaint();
-                }
-            }
-        });
-    }
-
-    private void addWindowEffects() {
-        addWindowListener(new WindowAdapter() {
-            @Override
-            public void windowClosing(WindowEvent e) {
-                System.exit(0);
-            }
-        });
-    }
-
-    private void setupEventListeners() {
+        newGameButton = new FlatButton("New Game");
         newGameButton.addActionListener(e -> startNewGameWithAnimation());
-        
+
+        resetScoreButton = new FlatButton("Reset Score");
         resetScoreButton.addActionListener(e -> {
             gameLogic.resetScores();
             scoreLabel.setText(getScoreText());
-            showNotification("Scores Reset!", successColor);
+            showNotification("Scores Reset!");
         });
-        
-        modeButton.addActionListener(e -> {
-            isPlayerVsAI = !isPlayerVsAI;
-            if (isPlayerVsAI) {
-                modeButton.setText("Player vs AI");
-                showNotification("AI Mode Activated!", accentColor);
-            } else {
-                modeButton.setText("Player vs Player");
-                showNotification("2-Player Mode!", accentColor);
-            }
-            startNewGameWithAnimation();
-        });
+
+        controls.add(newGameButton);
+        controls.add(resetScoreButton);
+
+        footer.add(scoreLabel, BorderLayout.WEST);
+        footer.add(statusLabel, BorderLayout.CENTER);
+        footer.add(controls, BorderLayout.EAST);
+
+        return footer;
     }
 
-    private void handleButtonClick(int row, int col) {
+    // ========================================================================
+    // MODE TOGGLE
+    // ========================================================================
+
+    private void toggleMode() {
+        isPlayerVsAI = !isPlayerVsAI;
+        if (isPlayerVsAI) {
+            modeButton.setText("Player vs AI");
+            modeButton.setActive(true);
+            showNotification("AI Mode Activated!");
+        } else {
+            modeButton.setText("Player vs Player");
+            modeButton.setActive(false);
+            showNotification("2-Player Mode!");
+        }
+        startNewGameWithAnimation();
+    }
+
+    // ========================================================================
+    // CELL CLICK HANDLING
+    // ========================================================================
+
+    private void handleCellClick(int row, int col) {
         if (!gameLogic.isValidMove(row, col) || gameLogic.isGameOver()) {
-            shakeButton(buttons[row][col]);
+            shakeCell(cells[row][col]);
             return;
         }
 
-        char currentPlayerChar = gameLogic.getCurrentPlayer();
+        char player = gameLogic.getCurrentPlayer();
         gameLogic.makeMove(row, col);
-        animateButtonClick(row, col, currentPlayerChar);
+        cells[row][col].setMark(player);
+        animateCellPlace(cells[row][col]);
 
         if (checkGameEnd()) {
             return;
@@ -295,159 +471,25 @@ public class TicTacToeUI extends JFrame {
 
         if (isPlayerVsAI && gameLogic.getCurrentPlayer() == 'O') {
             statusLabel.setText("AI is thinking...");
-            statusLabel.setForeground(warningColor);
+            statusLabel.setForeground(ACCENT_DARK);
             makeAIMove();
         } else {
             updateStatus();
         }
     }
 
-    private void animateButtonClick(int row, int col, char player) {
-        JButton button = buttons[row][col];
-        
-        button.setText(String.valueOf(player));
-        button.setFont(gameFont);
-        
-        if (player == 'X') {
-            button.setForeground(new Color(52, 152, 219));
-            button.setText("X");
-            showOptimizedSparkleEffect(button, new Color(135, 206, 250));
-        } else {
-            button.setForeground(new Color(231, 76, 60));
-            button.setText("O");
-            showOptimizedGlowEffect(button, new Color(255, 182, 193));
-        }
-        
-        animateButtonScale(button);
-    }
-
-    private void animateButtonScale(JButton button) {
-        Timer scaleTimer = new Timer(8, null);
-        final long startTime = System.currentTimeMillis();
-        final int duration = 400;
-        final int originalSize = 100;
-        final int maxSize = 110;
-        
-        scaleTimer.addActionListener(e -> {
-            long elapsed = System.currentTimeMillis() - startTime;
-            double progress = Math.min(1.0, (double) elapsed / duration);
-            
-            double easedProgress;
-            if (progress < 0.5) {
-                easedProgress = 2 * progress * progress * ((1.7 + 1) * progress - 1.7);
-            } else {
-                easedProgress = 1 + 2 * (progress - 1) * (progress - 1) * ((1.7 + 1) * (progress - 1) + 1.7);
-            }
-            
-            int currentSize = originalSize + (int)((maxSize - originalSize) * Math.sin(easedProgress * Math.PI));
-            button.setPreferredSize(new Dimension(currentSize, currentSize));
-            button.revalidate();
-            
-            if (progress >= 1.0) {
-                button.setPreferredSize(new Dimension(originalSize, originalSize));
-                button.revalidate();
-                scaleTimer.stop();
-            }
-        });
-        scaleTimer.start();
-    }
-
-    private void showOptimizedSparkleEffect(JButton button, Color sparkleColor) {
-        Timer sparkleTimer = new Timer(60, null);
-        final long startTime = System.currentTimeMillis();
-        final int duration = 600;
-        final Border originalBorder = button.getBorder();
-        
-        sparkleTimer.addActionListener(e -> {
-            long elapsed = System.currentTimeMillis() - startTime;
-            double progress = (double) elapsed / duration;
-            
-            if (progress < 1.0) {
-                int alpha = (int)(128 + 127 * Math.sin(progress * Math.PI * 4));
-                Color pulseColor = new Color(sparkleColor.getRed(), sparkleColor.getGreen(), 
-                                           sparkleColor.getBlue(), alpha);
-                button.setBorder(BorderFactory.createLineBorder(pulseColor, 2));
-            } else {
-                button.setBorder(originalBorder);
-                sparkleTimer.stop();
-            }
-        });
-        sparkleTimer.start();
-    }
-
-    private void showOptimizedGlowEffect(JButton button, Color glowColor) {
-        Timer glowTimer = new Timer(50, null);
-        final long startTime = System.currentTimeMillis();
-        final int duration = 800;
-        final Color originalBg = button.getBackground();
-        
-        glowTimer.addActionListener(e -> {
-            long elapsed = System.currentTimeMillis() - startTime;
-            double progress = (double) elapsed / duration;
-            
-            if (progress < 1.0) {
-                double intensity = 0.5 + 0.5 * Math.sin(progress * Math.PI * 3);
-                int red = (int)(originalBg.getRed() + (glowColor.getRed() - originalBg.getRed()) * intensity);
-                int green = (int)(originalBg.getGreen() + (glowColor.getGreen() - originalBg.getGreen()) * intensity);
-                int blue = (int)(originalBg.getBlue() + (glowColor.getBlue() - originalBg.getBlue()) * intensity);
-                
-                button.setBackground(new Color(Math.max(0, Math.min(255, red)),
-                                             Math.max(0, Math.min(255, green)),
-                                             Math.max(0, Math.min(255, blue))));
-            } else {
-                button.setBackground(originalBg);
-                glowTimer.stop();
-            }
-        });
-        glowTimer.start();
-    }
-
-    private void shakeButton(JButton button) {
-        Point originalLocation = button.getLocation();
-        Timer shakeTimer = new Timer(20, null);
-        final long startTime = System.currentTimeMillis();
-        final int duration = 400;
-        final int maxShake = 4;
-        
-        shakeTimer.addActionListener(e -> {
-            long elapsed = System.currentTimeMillis() - startTime;
-            double progress = (double) elapsed / duration;
-            
-            if (progress >= 1.0) {
-                button.setLocation(originalLocation);
-                shakeTimer.stop();
-                return;
-            }
-            
-            double amplitude = maxShake * (1.0 - progress) * Math.sin(progress * Math.PI * 12);
-            int offsetX = (int) amplitude;
-            
-            button.setLocation(originalLocation.x + offsetX, originalLocation.y);
-        });
-        shakeTimer.start();
-    }
+    // ========================================================================
+    // AI MOVE
+    // ========================================================================
 
     private void makeAIMove() {
         SwingUtilities.invokeLater(() -> {
-            Timer timer = new Timer(1000, e -> {
+            Timer timer = new Timer(800, e -> {
                 int[] aiMove = aiBot.getBestMove(gameLogic.getBoard(), 'O');
                 if (aiMove != null) {
                     gameLogic.makeMove(aiMove[0], aiMove[1]);
-                    animateButtonClick(aiMove[0], aiMove[1], 'O');
-                    
-                    JButton aiButton = buttons[aiMove[0]][aiMove[1]];
-                    aiButton.setBackground(new Color(255, 235, 235));
-                    
-                    showAIThinkingEffect(aiButton);
-                    
-                    Timer resetTimer = new Timer(200, null);
-                    resetTimer.addActionListener(resetEvent -> {
-                        aiButton.setBackground(cardColor);
-                        resetTimer.stop();
-                    });
-                    resetTimer.setRepeats(false);
-                    resetTimer.start();
-                    
+                    cells[aiMove[0]][aiMove[1]].setMark('O');
+                    animateCellPlace(cells[aiMove[0]][aiMove[1]]);
                     checkGameEnd();
                     updateStatus();
                 }
@@ -457,258 +499,269 @@ public class TicTacToeUI extends JFrame {
         });
     }
 
-    private void showAIThinkingEffect(JButton button) {
-        String[] thinkingSymbols = {".", "..", "...", "....", ".....", "....."};
-        Timer thinkTimer = new Timer(150, null);
-        final int[] symbolIndex = {0};
-        final JLabel thinkLabel = new JLabel();
-        
-        thinkLabel.setFont(new Font("Segoe UI", Font.BOLD, 16));
-        thinkLabel.setForeground(warningColor);
-        thinkLabel.setHorizontalAlignment(JLabel.CENTER);
-        
-        Point buttonLocation = button.getLocationOnScreen();
-        Point panelLocation = gamePanel.getLocationOnScreen();
-        int relativeX = buttonLocation.x - panelLocation.x + 25;
-        int relativeY = buttonLocation.y - panelLocation.y - 25;
-        
-        thinkLabel.setBounds(relativeX, relativeY, 50, 25);
-        gamePanel.add(thinkLabel, 0);
-        
-        thinkTimer.addActionListener(e -> {
-            if (symbolIndex[0] < thinkingSymbols.length) {
-                thinkLabel.setText(thinkingSymbols[symbolIndex[0]]);
-                
-                double pulse = 1.0 + 0.2 * Math.sin(symbolIndex[0] * Math.PI / 2);
-                Font currentFont = thinkLabel.getFont();
-                thinkLabel.setFont(new Font(currentFont.getName(), currentFont.getStyle(), 
-                                          (int)(16 * pulse)));
-                
-                symbolIndex[0]++;
-                gamePanel.repaint();
-            } else {
-                thinkTimer.stop();
-                gamePanel.remove(thinkLabel);
-                gamePanel.repaint();
-            }
-        });
-        thinkTimer.start();
-    }
+    // ========================================================================
+    // GAME END DETECTION
+    // ========================================================================
 
     private boolean checkGameEnd() {
         char winner = gameLogic.checkWinner();
         if (winner != ' ') {
             if (winner == 'D') {
                 statusLabel.setText("It's a Draw!");
-                statusLabel.setForeground(warningColor);
-                showWinAnimation(null);
+                statusLabel.setForeground(ACCENT_DARK);
             } else {
-                String winnerText;
+                String text;
                 if (isPlayerVsAI) {
-                    winnerText = winner == 'X' ? "YOU WIN!" : "AI WINS!";
+                    text = winner == 'X' ? "YOU WIN!" : "AI WINS!";
                 } else {
-                    winnerText = "PLAYER " + winner + " WINS!";
+                    text = "PLAYER " + winner + " WINS!";
                 }
-                statusLabel.setText(winnerText);
-                statusLabel.setForeground(winner == 'X' ? accentColor : dangerColor);
-                highlightWinningLineAnimated();
+                statusLabel.setText(text);
+                statusLabel.setForeground(winner == 'X' ? TEXT_PRIMARY : ACCENT_DARK);
+                highlightWinningLine();
             }
             scoreLabel.setText(getScoreText());
             gameLogic.setGameOver(true);
-            
             celebrateWin();
-            
             return true;
         }
         return false;
     }
 
-    private void highlightWinningLineAnimated() {
-        int[][] winningLine = gameLogic.getWinningLine();
-        if (winningLine != null) {
-            Timer highlightTimer = new Timer(100, null);
-            final int[] index = {0};
-            
-            highlightTimer.addActionListener(e -> {
-                if (index[0] < winningLine.length) {
-                    int[] pos = winningLine[index[0]];
-                    JButton button = buttons[pos[0]][pos[1]];
-                    
-                    animateButtonHighlight(button, successColor, accentColor);
-                    index[0]++;
-                } else {
-                    highlightTimer.stop();
-                }
-            });
-            highlightTimer.start();
-        }
-    }
-    
-    private void animateButtonHighlight(JButton button, Color targetBg, Color targetBorder) {
-        final Color originalBg = button.getBackground();
-        
-        Timer highlightTimer = new Timer(20, null);
-        final long startTime = System.currentTimeMillis();
-        final int duration = 300;
-        
-        highlightTimer.addActionListener(e -> {
-            long elapsed = System.currentTimeMillis() - startTime;
-            double progress = Math.min(1.0, (double) elapsed / duration);
-            
-            int red = (int)(originalBg.getRed() + (targetBg.getRed() - originalBg.getRed()) * progress);
-            int green = (int)(originalBg.getGreen() + (targetBg.getGreen() - originalBg.getGreen()) * progress);
-            int blue = (int)(originalBg.getBlue() + (targetBg.getBlue() - originalBg.getBlue()) * progress);
-            
-            button.setBackground(new Color(red, green, blue));
-            
-            if (progress >= 1.0) {
-                button.setBorder(BorderFactory.createLineBorder(targetBorder, 3));
-                highlightTimer.stop();
+    // ========================================================================
+    // WINNING LINE HIGHLIGHT (requirement #5)
+    // ========================================================================
+
+    /**
+     * Animates winning cells one-by-one with #C49A6C-tinted backgrounds,
+     * then triggers the BoardPanel to repaint the #C49A6C overlay line.
+     */
+    private void highlightWinningLine() {
+        int[][] line = gameLogic.getWinningLine();
+        if (line == null) return;
+
+        this.winLine = line;
+
+        Timer timer = new Timer(120, null);
+        final int[] idx = {0};
+
+        timer.addActionListener(e -> {
+            if (idx[0] < line.length) {
+                cells[line[idx[0]][0]][line[idx[0]][1]].setWinCell(true);
+                idx[0]++;
+            } else {
+                boardPanel.repaint();
+                timer.stop();
             }
         });
-        highlightTimer.start();
+        timer.start();
     }
 
-    private void celebrateWin() {
-        Timer pulseTimer = new Timer(60, null);
-        final long startTime = System.currentTimeMillis();
-        final int duration = 3000;
-        final Font originalFont = statusLabel.getFont();
-        final Color[] celebrationColors = {
-            new Color(255, 99, 99),
-            new Color(255, 159, 26),
-            new Color(255, 206, 84),
-            new Color(85, 239, 196),
-            new Color(116, 185, 255),
-            new Color(162, 155, 254)
-        };
-        
-        pulseTimer.addActionListener(e -> {
-            long elapsed = System.currentTimeMillis() - startTime;
-            double progress = (double) elapsed / duration;
-            
+    // ========================================================================
+    // ANIMATIONS — adapted to palette colors
+    // ========================================================================
+
+    /**
+     * Subtle scale bounce when a mark is placed.
+     * Uses a paint-only Graphics2D transform — no layout change, no squishing.
+     */
+    private void animateCellPlace(GameCell cell) {
+        Timer scaleTimer = new Timer(10, null);
+        final long start = System.currentTimeMillis();
+        final int duration = 300;
+
+        scaleTimer.addActionListener(e -> {
+            double progress = Math.min(1.0, (System.currentTimeMillis() - start) / (double) duration);
+            double scale = 1.0 + 0.2 * Math.sin(progress * Math.PI);
+            cell.setMarkScale(scale);
+
             if (progress >= 1.0) {
-                statusLabel.setFont(originalFont);
-                statusLabel.setForeground(primaryColor);
-                pulseTimer.stop();
+                cell.setMarkScale(1.0);
+                scaleTimer.stop();
+            }
+        });
+        scaleTimer.start();
+    }
+
+    /**
+     * Horizontal shake for invalid move attempts.
+     */
+    private void shakeCell(GameCell cell) {
+        Point original = cell.getLocation();
+        Timer shakeTimer = new Timer(20, null);
+        final long start = System.currentTimeMillis();
+        final int duration = 300;
+
+        shakeTimer.addActionListener(e -> {
+            double progress = (System.currentTimeMillis() - start) / (double) duration;
+            if (progress >= 1.0) {
+                cell.setLocation(original);
+                shakeTimer.stop();
                 return;
             }
-            
-            double colorProgress = (progress * celebrationColors.length) % celebrationColors.length;
-            int colorIndex1 = (int) colorProgress;
-            int colorIndex2 = (colorIndex1 + 1) % celebrationColors.length;
-            double blend = colorProgress - colorIndex1;
-            
-            Color color1 = celebrationColors[colorIndex1];
-            Color color2 = celebrationColors[colorIndex2];
-            Color blendedColor = new Color(
-                (int)(color1.getRed() + (color2.getRed() - color1.getRed()) * blend),
-                (int)(color1.getGreen() + (color2.getGreen() - color1.getGreen()) * blend),
-                (int)(color1.getBlue() + (color2.getBlue() - color1.getBlue()) * blend)
-            );
-            statusLabel.setForeground(blendedColor);
-            
-            double pulse = 1.0 + 0.3 * Math.sin(progress * Math.PI * 8);
-            int newSize = (int)(originalFont.getSize() * pulse);
-            statusLabel.setFont(new Font(originalFont.getName(), originalFont.getStyle(), newSize));
+            int offset = (int) (3 * (1.0 - progress) * Math.sin(progress * Math.PI * 10));
+            cell.setLocation(original.x + offset, original.y);
         });
-        
-        showConfettiEffect();
-        pulseTimer.start();
+        shakeTimer.start();
     }
 
+    /**
+     * Celebration: pulse the status label through palette accent colors
+     * and spawn confetti particles.
+     */
+    private void celebrateWin() {
+        Timer pulse = new Timer(50, null);
+        final long start = System.currentTimeMillis();
+        final int duration = 2500;
+        final Font origFont = statusLabel.getFont();
+        final Color[] colors = {ACCENT, ACCENT_DARK, TEXT_PRIMARY, ACCENT};
+
+        pulse.addActionListener(e -> {
+            double progress = (System.currentTimeMillis() - start) / (double) duration;
+            if (progress >= 1.0) {
+                statusLabel.setFont(origFont);
+                statusLabel.setForeground(TEXT_PRIMARY);
+                pulse.stop();
+                return;
+            }
+
+            // Smooth color cycling through palette accents
+            double cp = (progress * colors.length) % colors.length;
+            int i1 = (int) cp;
+            int i2 = (i1 + 1) % colors.length;
+            double blend = cp - i1;
+            Color c1 = colors[i1], c2 = colors[i2];
+            statusLabel.setForeground(new Color(
+                    (int) (c1.getRed() + (c2.getRed() - c1.getRed()) * blend),
+                    (int) (c1.getGreen() + (c2.getGreen() - c1.getGreen()) * blend),
+                    (int) (c1.getBlue() + (c2.getBlue() - c1.getBlue()) * blend)
+            ));
+
+            // Gentle size pulse
+            double scale = 1.0 + 0.12 * Math.sin(progress * Math.PI * 6);
+            statusLabel.setFont(new Font(origFont.getName(), origFont.getStyle(),
+                    (int) (origFont.getSize() * scale)));
+        });
+
+        showConfettiEffect();
+        pulse.start();
+    }
+
+    /**
+     * Spawn confetti particles using only palette colors.
+     */
     private void showConfettiEffect() {
-        String[] confettiSymbols = {"*", "+", "o", "^", "#", "~", "@"};
-        final int confettiCount = 8;
-        
-        for (int i = 0; i < confettiCount; i++) {
-            final int delay = i * 100;
-            Timer startTimer = new Timer(delay, null);
-            startTimer.setRepeats(false);
-            
-            startTimer.addActionListener(startEvent -> {
-                createOptimizedConfetti(confettiSymbols[(int)(Math.random() * confettiSymbols.length)]);
-            });
-            startTimer.start();
+        String[] symbols = {"●", "■", "◆", "▲", "★"};
+        Color[] colors = {ACCENT, ACCENT_DARK, SURFACE, TEXT_PRIMARY};
+
+        for (int i = 0; i < 8; i++) {
+            final int delay = i * 80;
+            Timer t = new Timer(delay, null);
+            t.setRepeats(false);
+            t.addActionListener(ev -> createConfetti(
+                    symbols[(int) (Math.random() * symbols.length)],
+                    colors[(int) (Math.random() * colors.length)]
+            ));
+            t.start();
         }
     }
-    
-    private void createOptimizedConfetti(String symbol) {
-        final JLabel confetti = new JLabel(symbol);
-        confetti.setFont(new Font("Segoe UI", Font.BOLD, 20 + (int)(Math.random() * 8)));
-        
-        Color[] colors = {
-            new Color(255, 215, 0),
-            new Color(255, 99, 132),
-            new Color(54, 162, 235),
-            new Color(255, 159, 64),
-            new Color(153, 102, 255),
-            new Color(75, 192, 192)
-        };
-        confetti.setForeground(colors[(int)(Math.random() * colors.length)]);
-        
-        int startX = 50 + (int)(Math.random() * (getWidth() - 100));
-        int startY = -50;
-        final double velocityX = (Math.random() - 0.5) * 4;
-        final double velocityY = 2 + Math.random() * 3;
-        final double rotation = Math.random() * 0.2;
-        
-        confetti.setBounds(startX, startY, 30, 30);
-        getContentPane().add(confetti, 0);
-        
-        Timer animationTimer = new Timer(16, null);
-        final long startTime = System.currentTimeMillis();
-        final int duration = 3000 + (int)(Math.random() * 2000);
-        
-        animationTimer.addActionListener(e -> {
-            long elapsed = System.currentTimeMillis() - startTime;
+
+    private void createConfetti(String symbol, Color color) {
+        JLabel p = new JLabel(symbol);
+        p.setFont(new Font(FONT_FAMILY, Font.BOLD, 14 + (int) (Math.random() * 8)));
+        p.setForeground(color);
+
+        int startX = 40 + (int) (Math.random() * (getWidth() - 80));
+        final double vx = (Math.random() - 0.5) * 3;
+        final double vy = 1.5 + Math.random() * 2;
+        p.setBounds(startX, -25, 26, 26);
+        getContentPane().add(p, 0);
+
+        Timer anim = new Timer(16, null);
+        final long start = System.currentTimeMillis();
+        final int duration = 2500 + (int) (Math.random() * 1500);
+
+        anim.addActionListener(e -> {
+            long elapsed = System.currentTimeMillis() - start;
             double progress = (double) elapsed / duration;
-            
+
             if (progress >= 1.0) {
-                animationTimer.stop();
-                getContentPane().remove(confetti);
+                anim.stop();
+                getContentPane().remove(p);
                 repaint();
                 return;
             }
-            
-            int newX = (int)(startX + velocityX * elapsed / 16);
-            int newY = (int)(startY + velocityY * elapsed / 16 + 0.5 * 0.1 * Math.pow(elapsed / 16, 2));
-            
-            newX += (int)(Math.sin(elapsed * rotation / 100) * 15);
-            
-            confetti.setLocation(newX, newY);
-            
-            if (progress > 0.8) {
-                float alpha = (float)(1.0 - (progress - 0.8) / 0.2);
-                confetti.setForeground(new Color(
-                    confetti.getForeground().getRed(),
-                    confetti.getForeground().getGreen(),
-                    confetti.getForeground().getBlue(),
-                    (int)(255 * alpha)
+
+            int nx = (int) (startX + vx * elapsed / 16);
+            int ny = (int) (-25 + vy * elapsed / 16 + 0.04 * Math.pow(elapsed / 16.0, 2));
+            nx += (int) (Math.sin(elapsed * 0.005) * 10);
+            p.setLocation(nx, ny);
+
+            // Fade out in final 25%
+            if (progress > 0.75) {
+                float alpha = (float) (1.0 - (progress - 0.75) / 0.25);
+                p.setForeground(new Color(
+                        color.getRed(), color.getGreen(), color.getBlue(),
+                        Math.max(0, Math.min(255, (int) (255 * alpha)))
                 ));
             }
         });
-        
-        animationTimer.start();
+        anim.start();
     }
 
-    private void showWinAnimation(int[][] winningLine) {
-        Timer flashTimer = new Timer(300, null);
-        final int[] flashCount = {0};
-        final Color originalBg = statusLabel.getBackground();
-        
-        flashTimer.addActionListener(e -> {
-            if (flashCount[0] < 6) {
-                statusLabel.setOpaque(true);
-                statusLabel.setBackground(flashCount[0] % 2 == 0 ? warningColor : originalBg);
-                flashCount[0]++;
+    // ========================================================================
+    // NEW GAME
+    // ========================================================================
+
+    private void startNewGameWithAnimation() {
+        Timer transition = new Timer(16, null);
+        final long start = System.currentTimeMillis();
+        final int duration = 400;
+        final boolean[] boardReset = {false};
+
+        transition.addActionListener(e -> {
+            double progress = (System.currentTimeMillis() - start) / (double) duration;
+
+            if (progress < 0.5) {
+                scaleBoard(1.0 - progress * 0.15);
             } else {
-                statusLabel.setOpaque(false);
-                flashTimer.stop();
+                if (!boardReset[0]) {
+                    resetGameBoard();
+                    boardReset[0] = true;
+                }
+                double scale = 0.925 + (progress - 0.5) * 0.15;
+                scaleBoard(Math.min(1.0, scale));
+
+                if (progress >= 1.0) {
+                    scaleBoard(1.0);
+                    transition.stop();
+                }
             }
         });
-        flashTimer.start();
+        transition.start();
     }
+
+    private void scaleBoard(double scale) {
+        int size = (int) (120 * scale);
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                cells[i][j].setPreferredSize(new Dimension(size, size));
+        boardPanel.revalidate();
+        boardPanel.repaint();
+    }
+
+    private void resetGameBoard() {
+        gameLogic.resetGame();
+        winLine = null;
+        for (int i = 0; i < 3; i++)
+            for (int j = 0; j < 3; j++)
+                cells[i][j].reset();
+        updateStatus();
+    }
+
+    // ========================================================================
+    // STATUS & SCORE
+    // ========================================================================
 
     private void updateStatus() {
         if (!gameLogic.isGameOver()) {
@@ -717,119 +770,74 @@ public class TicTacToeUI extends JFrame {
             } else {
                 statusLabel.setText("Player " + gameLogic.getCurrentPlayer() + "'s Turn");
             }
-            statusLabel.setForeground(primaryColor);
+            statusLabel.setForeground(TEXT_PRIMARY);
         }
-    }
-
-    private void startNewGameWithAnimation() {
-        Timer transitionTimer = new Timer(16, null);
-        final long startTime = System.currentTimeMillis();
-        final int duration = 600;
-        
-        transitionTimer.addActionListener(e -> {
-            long elapsed = System.currentTimeMillis() - startTime;
-            double progress = (double) elapsed / duration;
-            
-            if (progress < 0.5) {
-                double scale = 1.0 - (progress * 2 * 0.1);
-                scaleGamePanel(scale);
-            } else if (progress == 0.5 || (progress > 0.5 && progress < 0.6)) {
-                if (progress > 0.5 && progress < 0.52) {
-                    resetGameBoard();
-                }
-                scaleGamePanel(0.9);
-            } else {
-                double scale = 0.9 + ((progress - 0.5) * 2 * 0.1);
-                scaleGamePanel(scale);
-                
-                if (progress >= 1.0) {
-                    scaleGamePanel(1.0);
-                    transitionTimer.stop();
-                }
-            }
-        });
-        transitionTimer.start();
-    }
-    
-    private void scaleGamePanel(double scale) {
-        for (int i = 0; i < 3; i++) {
-            for (int j = 0; j < 3; j++) {
-                int size = (int)(100 * scale);
-                buttons[i][j].setPreferredSize(new Dimension(size, size));
-            }
-        }
-        gamePanel.revalidate();
-        gamePanel.repaint();
-    }
-
-    private void resetGameBoard() {
-        gameLogic.resetGame();
-        
-        for (int i = 0; i < 3; i++) {
-            for (int j = 0; j < 3; j++) {
-                buttons[i][j].setText("");
-                buttons[i][j].setBackground(cardColor);
-                buttons[i][j].setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createRaisedBevelBorder(),
-                    BorderFactory.createEmptyBorder(5, 5, 5, 5)
-                ));
-                buttons[i][j].setEnabled(true);
-                buttons[i][j].setPreferredSize(new Dimension(100, 100));
-            }
-        }
-        
-        updateStatus();
-    }
-
-    private void showNotification(String message, Color color) {
-        JLabel notification = new JLabel(message, JLabel.CENTER);
-        notification.setFont(new Font("Segoe UI", Font.BOLD, 16));
-        notification.setForeground(Color.WHITE);
-        notification.setOpaque(true);
-        notification.setBackground(color);
-        notification.setBorder(BorderFactory.createEmptyBorder(10, 20, 10, 20));
-        
-        JWindow popup = new JWindow();
-        popup.add(notification);
-        popup.pack();
-        popup.setLocationRelativeTo(this);
-        popup.setVisible(true);
-        
-        Timer timer = new Timer(1500, e -> popup.dispose());
-        timer.setRepeats(false);
-        timer.start();
     }
 
     private String getScoreText() {
         if (isPlayerVsAI) {
-            return String.format("You: %d | AI: %d | Draws: %d", 
-                gameLogic.getPlayerXScore(), gameLogic.getPlayerOScore(), gameLogic.getDraws());
-        } else {
-            return String.format("Player X: %d | Player O: %d | Draws: %d", 
-                gameLogic.getPlayerXScore(), gameLogic.getPlayerOScore(), gameLogic.getDraws());
+            return String.format("You: %d  ·  AI: %d  ·  Draws: %d",
+                    gameLogic.getPlayerXScore(), gameLogic.getPlayerOScore(), gameLogic.getDraws());
         }
+        return String.format("X: %d  ·  O: %d  ·  Draws: %d",
+                gameLogic.getPlayerXScore(), gameLogic.getPlayerOScore(), gameLogic.getDraws());
     }
+
+    // ========================================================================
+    // NOTIFICATIONS
+    // ========================================================================
+
+    private void showNotification(String message) {
+        JLabel label = new JLabel(message, JLabel.CENTER);
+        label.setFont(new Font(FONT_FAMILY, Font.BOLD, 15));
+        label.setForeground(BG_PRIMARY);
+        label.setOpaque(true);
+        label.setBackground(ACCENT);
+        label.setBorder(BorderFactory.createEmptyBorder(12, 28, 12, 28));
+
+        JWindow popup = new JWindow();
+        popup.add(label);
+        popup.pack();
+        popup.setLocationRelativeTo(this);
+        popup.setVisible(true);
+
+        Timer t = new Timer(1400, e -> popup.dispose());
+        t.setRepeats(false);
+        t.start();
+    }
+
+    // ========================================================================
+    // GLOBAL RENDERING HINTS
+    // ========================================================================
 
     @Override
     public void paint(Graphics g) {
-        Graphics2D g2d = (Graphics2D) g;
-        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        g2d.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-        super.paint(g2d);
+        Graphics2D g2 = (Graphics2D) g;
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g2.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        super.paint(g2);
     }
 
+    // ========================================================================
+    // ENTRY POINT
+    // ========================================================================
+
     public static void main(String[] args) {
+        // Use system look-and-feel for native title bar (requirement #8),
+        // but our custom painting overrides all widget rendering
+        try {
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception ignored) {
+        }
+
         SwingUtilities.invokeLater(() -> {
             TicTacToeUI game = new TicTacToeUI();
             game.setVisible(true);
-            
-            Timer welcomeTimer = new Timer(1000, e -> {
-                game.showNotification("Welcome to Tic Tac Toe Ultimate!", game.accentColor);
-            });
-            welcomeTimer.setRepeats(false);
-            welcomeTimer.start();
+
+            Timer welcome = new Timer(800, e -> game.showNotification("Welcome to Tic Tac Toe!"));
+            welcome.setRepeats(false);
+            welcome.start();
         });
     }
 }
