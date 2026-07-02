@@ -49,18 +49,18 @@
 
 ### Installation & Running
 
-1. ** Clone the repository**
+1. **Clone the repository**
    ```bash
    git clone https://github.com/Nitesh-Kumar-Das/TICTAC-TOE.git
    cd TICTAC-TOE
    ```
 
-2. ** Compile the project**
+2. **Compile the project**
    ```bash
    javac *.java
    ```
 
-3. ** Run the game**
+3. **Run the game**
    ```bash
    java TicTacToeUI
    ```
@@ -85,11 +85,11 @@ TICTAC-TOE/
 ## How to Play
 
 ### Basic Gameplay
-1. ** Start** - Launch the game to see the main interface
-2. ** Choose Mode** - Toggle between "Player vs Player" and "Player vs AI"
-3. ** Make Moves** - Click on empty squares to place your mark (X or O)
-4. ** Win Condition** - Get three marks in a row (horizontal, vertical, or diagonal)
-5. ** New Game** - Click "New Game" to start fresh or "Reset Score" to clear statistics
+1. **Start** - Launch the game to see the main interface
+2. **Choose Mode** - Toggle between "Player vs Player" and "Player vs AI"
+3. **Make Moves** - Click on empty squares to place your mark (X or O)
+4. **Win Condition** - Get three marks in a row (horizontal, vertical, or diagonal)
+5. **New Game** - Click "New Game" to start fresh or "Reset Score" to clear statistics
 
 ### Game Controls
 | Control | Action |
@@ -132,10 +132,10 @@ The AI opponent uses advanced algorithms to provide challenging gameplay:
 | **Danger** | `#FF7675` | Coral - Error states |
 
 ### Typography
-- ** Title** - Segoe UI Bold, 28px
-- ** Game Buttons** - Segoe UI Bold, 36px
-- ** UI Elements** - Segoe UI Regular, 14px
-- ** Status** - Segoe UI Bold, 18px
+- **Title** - Segoe UI Bold, 28px
+- **Game Buttons** - Segoe UI Bold, 36px
+- **UI Elements** - Segoe UI Regular, 14px
+- **Status** - Segoe UI Bold, 18px
 
 ### Animations
 - **Timing** - 60+ FPS for smooth performance
@@ -178,17 +178,17 @@ The AI opponent uses advanced algorithms to provide challenging gameplay:
 ## Game Rules
 
 ### Standard Tic Tac Toe Rules
-1. ** Grid** - 3×3 playing field
-2. ** Players** - Two players alternate turns (X and O)
-3. ** Objective** - Get three marks in a row, column, or diagonal
-4. ** First Move** - X always goes first
-5. ** Draw** - Game ends in a tie if the board fills without a winner
+1. **Grid** - 3×3 playing field
+2. **Players** - Two players alternate turns (X and O)
+3. **Objective** - Get three marks in a row, column, or diagonal
+4. **First Move** - X always goes first
+5. **Draw** - Game ends in a tie if the board fills without a winner
 
 ### Scoring System
-- ** Win** - +1 point for the winning player
-- ** Draw** - +1 draw count for both players
-- ** Loss** - No points awarded
-- ** Persistent** - Scores maintained across games until reset
+- **Win** - +1 point for the winning player
+- **Draw** - +1 draw count for both players
+- **Loss** - No points awarded
+- **Persistent** - Scores maintained across games until reset
 
 ---
 
@@ -218,11 +218,11 @@ Contributions are welcome! Here's how you can help:
 
 ### How to Contribute
 
-1. ** Fork** the repository
-2. ** Create** a feature branch (`git checkout -b feature/AmazingFeature`)
-3. ** Commit** your changes (`git commit -m 'Add some AmazingFeature'`)
-4. ** Push** to the branch (`git push origin feature/AmazingFeature`)
-5. ** Open** a Pull Request
+1. **Fork** the repository
+2. **Create** a feature branch (`git checkout -b feature/AmazingFeature`)
+3. **Commit** your changes (`git commit -m 'Add some AmazingFeature'`)
+4. **Push** to the branch (`git push origin feature/AmazingFeature`)
+5. **Open** a Pull Request
 
 ### Contribution Guidelines
 - Follow existing code style and formatting
