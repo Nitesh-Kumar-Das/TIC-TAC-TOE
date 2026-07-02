@@ -61,7 +61,7 @@ jobs:
       - name: Install WiX Toolset (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          choco install wix --no-progress
+          choco install wixtoolset --no-progress
           echo "C:\Program Files (x86)\WiX Toolset v3.11\bin" >> $GITHUB_PATH
         shell: bash
 
